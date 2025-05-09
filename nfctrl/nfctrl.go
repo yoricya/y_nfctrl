@@ -124,9 +124,6 @@ func parseTCPPacket(packet gopacket.Packet) (*layers.TCP, string, error) {
 		switch layer.LayerType() {
 		case layers.LayerTypeTCP:
 			tcp := layer.(*layers.TCP)
-			if !tcp.SYN {
-				return nil, "", errors.New("not a TCP-SYN")
-			}
 			tcpLayer = tcp
 
 		case layers.LayerTypeIPv4:
@@ -142,11 +139,21 @@ func parseTCPPacket(packet gopacket.Packet) (*layers.TCP, string, error) {
 	}
 
 	if srcIP == "" {
-		return nil, "", errors.New("wtf, IP layer not found?")
+		return nil, "", errors.New("wtf, IP layer not found")
 	}
 
 	if tcpLayer == nil {
 		return nil, "", errors.New("not a TCP")
 	}
+
+	if !tcpLayer.SYN {
+		return nil, "", errors.New("not a TCP-SYN")
+	}
+
+	// если есть SYN+ACK - это ответ от сервера, вероятно проходящий через NAT, это не то, что мы ищем
+	if tcpLayer.ACK {
+		return nil, "", errors.New("TCP-ACK flag found")
+	}
+
 	return tcpLayer, srcIP, nil
 }
