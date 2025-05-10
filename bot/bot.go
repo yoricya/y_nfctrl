@@ -57,7 +57,7 @@ func SendIPQuestion(ip string, port uint16, owned_id int64, api *tgbotapi.BotAPI
 	row := tgbotapi.NewInlineKeyboardRow(unbanBtn, declineBtn)
 	keyboard := tgbotapi.NewInlineKeyboardMarkup(row)
 
-	msg := tgbotapi.NewMessage(owned_id, fmt.Sprint("<b>ALERT.</b> New SYN from <u>", ip, ":", port, "</u>"))
+	msg := tgbotapi.NewMessage(owned_id, fmt.Sprint("<b>ALERT.</b> New SYN from <u>", ip, " to :", port, "</u>"))
 	msg.ParseMode = tgbotapi.ModeHTML
 	msg.ReplyMarkup = keyboard
 
