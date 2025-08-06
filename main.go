@@ -14,6 +14,7 @@ func main() {
 	tg_bot_token_ptr := flag.String("tg_bot_token", "", "Your telegram bot token")
 	tg_owned_id_ptr := flag.Int64("tg_owned_id", 0, "Your Telegram Account ID")
 	nf_q_id_ptr := flag.Uint("nf_queue_id", 0, "NFQUEUE ID or NFQUEUE number set in iptables")
+	syn_need_repeats_count := flag.Int("syn_repeats", 0, "Repeats of SYN for send tg message")
 
 	flag.Parse()
 
@@ -38,6 +39,13 @@ func main() {
 
 	log.Print("[MAIN-INF] Default BOT Token: ", strings.Split(tg_bot_token, ":")[0], ":***\n")
 
+	if *syn_need_repeats_count > 1024 {
+		panic("Maximum syn repeats = 1024!")
+	}
+
+	// Init NFCTRL
+	nfctrl_struct := nfctrl.Make(*syn_need_repeats_count)
+
 	api_bot := bot.Init(tg_bot_token, tg_owned_id, func(cmds []string, api *tgbotapi.BotAPI, update tgbotapi.Update, is_query bool) {
 		if cmds[0] == "/allow" {
 			if len(cmds) < 2 {
@@ -46,7 +54,7 @@ func main() {
 				return
 			}
 
-			if err := nfctrl.AllowIP(cmds[1]); err != nil {
+			if err := nfctrl_struct.AllowIP(cmds[1]); err != nil {
 				msg := bot.CreateErrorMessage(err.Error(), tg_owned_id)
 				api.Send(msg)
 				return
@@ -63,7 +71,7 @@ func main() {
 				return
 			}
 
-			if err := nfctrl.DisallowIP(cmds[1]); err != nil {
+			if err := nfctrl_struct.DisallowIP(cmds[1]); err != nil {
 				msg := bot.CreateErrorMessage(err.Error(), tg_owned_id)
 				api.Send(msg)
 				return
@@ -76,7 +84,7 @@ func main() {
 		}
 	})
 
-	nfctrl.Init(tg_owned_id, api_bot, uint16(nf_q_id), 100, netfilter.NF_DEFAULT_PACKET_SIZE)
+	nfctrl_struct.Init(tg_owned_id, api_bot, uint16(nf_q_id), 100, netfilter.NF_DEFAULT_PACKET_SIZE)
 
 	select {}
 }

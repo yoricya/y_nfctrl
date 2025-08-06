@@ -13,59 +13,56 @@ import (
 	"y_nfctrl/bot"
 )
 
-var (
-	allowList      = map[string]int64{} // [IP]UnixMillis окончания доступа
-	allowListMutex = &sync.RWMutex{}
-)
+type NFCTRL struct {
+	syn_need_repeats int
+	ip_list_mutex    *sync.RWMutex
+	ip_list          map[string]int64 // int64 - session state:
+	// -1 = banned,
+	// 0 = new IP
+	// 1 - 1024 = SYN repeats count
+	// 1025 - MAX = Timestamp of end allow status
+}
 
-func AllowIP(ip1 string) error {
-	ip := strings.TrimSpace(ip1)
-
-	if _, ok := IsIPAllow(ip); ok {
-		return errors.New("IP already allowed")
+func Make(syn_need_repeats int) *NFCTRL {
+	return &NFCTRL{
+		syn_need_repeats: syn_need_repeats,
+		ip_list_mutex:    &sync.RWMutex{},
+		ip_list:          make(map[string]int64),
 	}
+}
 
-	tm := time.Now().UnixMilli() + 1000*60*60 // Разрешить повторные TCP-SYN в течение часа
-	allowListMutex.Lock()
-	allowList[ip] = tm
-	allowListMutex.Unlock()
-
+func (nfctrl *NFCTRL) AllowIP(ip1 string) error {
+	ip := strings.TrimSpace(ip1)
+	nfctrl.set_state(ip, time.Now().UnixMilli()+1000*60*60) // Разрешить повторные TCP-SYN в течение часа
 	return nil
 }
 
-func DisallowIP(ip1 string) error {
+func (nfctrl *NFCTRL) DisallowIP(ip1 string) error {
 	ip := strings.TrimSpace(ip1)
 
-	if c, ok := IsIPAllow(ip); c && !ok {
+	if nfctrl.get_state(ip) == -1 {
 		return errors.New("IP already disallowed")
 	}
 
-	allowListMutex.Lock()
-	allowList[ip] = 0
-	allowListMutex.Unlock()
+	nfctrl.set_state(ip, -1) // Ставим статус -1 - Banned.
 
 	return nil
 }
 
-func IsIPAllow(ip1 string) (bool, bool) { // -> isContains, isAllowed
-	ip := strings.TrimSpace(ip1)
+func (nfctrl *NFCTRL) get_state(ip string) int64 {
+	nfctrl.ip_list_mutex.RLock()
+	defer nfctrl.ip_list_mutex.RUnlock()
 
-	allowListMutex.RLock()
-	val, contain := allowList[ip]
-	allowListMutex.RUnlock()
-
-	if contain {
-		if val != 0 && time.Now().UnixMilli() < val {
-			return true, true
-		}
-
-		return true, false
-	}
-
-	return false, false
+	return nfctrl.ip_list[ip]
 }
 
-func Init(ownedID int64, botAPI *tgbotapi.BotAPI, queueID uint16, maxQueueSize uint32, packetSize uint32) {
+func (nfctrl *NFCTRL) set_state(ip string, state int64) {
+	nfctrl.ip_list_mutex.Lock()
+	nfctrl.ip_list[ip] = state
+	nfctrl.ip_list_mutex.Unlock()
+}
+
+func (nfctrl *NFCTRL) Init(ownedID int64, botAPI *tgbotapi.BotAPI, queueID uint16, maxQueueSize uint32, packetSize uint32) {
 	nfq, err := netfilter.NewNFQueue(queueID, maxQueueSize, packetSize)
 	if err != nil {
 		panic(err)
@@ -87,31 +84,49 @@ func Init(ownedID int64, botAPI *tgbotapi.BotAPI, queueID uint16, maxQueueSize u
 				continue
 			}
 
-			contain, is_allow := IsIPAllow(srcIP)
+			state := nfctrl.get_state(srcIP)
 
-			// Если allow, то пропускаем пакет дальше
-			if is_allow {
-				p.SetVerdict(netfilter.NF_ACCEPT)
+			// State = -1 - IP Banned
+			if state == -1 {
+				p.SetVerdict(netfilter.NF_DROP)
 				continue
 			}
 
-			// Иначе, сразу же дропаем
-			p.SetVerdict(netfilter.NF_DROP)
+			// Если у нас timestamp, то чекаем
+			if state >= 1025 {
 
-			// И если пришел SYN от кого-то нового
-			if !contain {
+				// Если не истек, то пропускаем
+				if state > time.Now().UnixMilli() {
+					p.SetVerdict(netfilter.NF_ACCEPT)
+					continue
+				}
 
-				// Сразу по умолчанию баним IP (Чтобы не было спама)
-				DisallowIP(srcIP)
+				// Так как на этом IP уже была таймштампа,
+				// значит ранее он был разрешен,
+				// поэтому делаем его что-то типа доверенным,
+				// и ставим нужное кол-во SYN Repeats,
+				// чтобы уведомление пришло сразу
+				nfctrl.set_state(srcIP, int64(nfctrl.syn_need_repeats))
+			}
+
+			// Чекаем сколько повторений было, если скока надо, то:
+			if state == int64(nfctrl.syn_need_repeats) {
+				// Ставим состояние -1 (Забанен)
+				nfctrl.set_state(srcIP, -1)
 
 				// Шлем предупреждение
 				log.Println("[NFCTRL] New TCP SYN from", srcIP, ":", tcp.DstPort)
 
 				// И запрос в ТГ
 				bot.SendIPQuestion(srcIP, uint16(tcp.DstPort), ownedID, botAPI)
+				continue
 			}
 
-			// Иначе... ничего не делаем так как IP уже находится в бане
+			// Прибавляем SYN Repeats
+			nfctrl.set_state(srcIP, state+1)
+
+			// Дропаем пакет
+			p.SetVerdict(netfilter.NF_DROP)
 		}
 	}
 }
@@ -147,12 +162,12 @@ func parseTCPPacket(packet gopacket.Packet) (*layers.TCP, string, error) {
 	}
 
 	if !tcpLayer.SYN {
-		return nil, "", errors.New("not a TCP-SYN")
+		return nil, "", errors.New("not a SYN flag")
 	}
 
 	// если есть SYN+ACK - это ответ от сервера, вероятно проходящий через NAT, это не то, что мы ищем
 	if tcpLayer.ACK {
-		return nil, "", errors.New("TCP-ACK flag found")
+		return nil, "", errors.New("ACK flag found")
 	}
 
 	return tcpLayer, srcIP, nil
