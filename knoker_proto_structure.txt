@@ -1,0 +1,14 @@
+Layer 0:
+[randomID uint64] [XORed Layer 1 -> xor(layer1, sha256(randomID + timestamp / 1000 / 20 + key))]
+
+Layer 1:
+[timestamp int64] [HMAC 32 byte -> hmac(key, randomID + timestamp + Layer 3)] [Layer 2]
+
+Layer 2:
+[OpCode 1byte]
+
+// OpCode:
+    0 - Disallow IP
+    9 - Emergency shutdown (or reboot, if systemctl (or another) service configured for this)
+    12 - Allow IP
+

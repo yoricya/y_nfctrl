@@ -2,89 +2,124 @@ package main
 
 import (
 	"flag"
-	"github.com/AkihiroSuda/go-netfilter-queue"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"fmt"
 	"log"
-	"strings"
-	"y_nfctrl/bot"
-	"y_nfctrl/nfctrl"
+	"runtime/debug"
+	"time"
+	"y_nfctrl/api"
+	"y_nfctrl/knockerModule"
+	"y_nfctrl/nfqueueModule"
+	"y_nfctrl/telegramModule"
+
+	"github.com/AkihiroSuda/go-netfilter-queue"
 )
 
+const staticVersion = "2.0d03.2026"
+
+func GetVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "~" + staticVersion
+	}
+
+	vcsRev := ""
+	vcsMod := ""
+	vcsTime := ""
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			vcsRev = s.Value
+		}
+
+		if s.Key == "vcs.modified" {
+			vcsMod = s.Value
+		}
+
+		if s.Key == "vcs.time" {
+			vcsTime = s.Value
+		}
+
+		if vcsRev != "" && vcsMod != "" && vcsTime != "" {
+			break
+		}
+	}
+
+	if vcsRev != "" {
+		v := staticVersion + " (" + vcsRev
+
+		if vcsMod == "true" {
+			v += ", dirty"
+		}
+
+		if vcsTime != "" {
+			if t, err := time.Parse(time.RFC3339, vcsTime); err == nil {
+				v += ", " + t.Format("2006.01.02 / 15:04")
+			}
+		}
+
+		return v + ")"
+	}
+
+	return "~" + staticVersion
+}
+
 func main() {
-	tg_bot_token_ptr := flag.String("tg_bot_token", "", "Your telegram bot token")
-	tg_owned_id_ptr := flag.Int64("tg_owned_id", 0, "Your Telegram Account ID")
-	nf_q_id_ptr := flag.Uint("nf_queue_id", 0, "NFQUEUE ID or NFQUEUE number set in iptables")
-	syn_need_repeats_count := flag.Int("syn_repeats", 0, "Repeats of SYN for send tg message")
+	fmt.Println("[MAIN] NfCtrl v" + GetVersion() + " starting...")
+
+	// Parse args
+
+	// TG
+	tgBotToken := flag.String("tg_bot_token", "", "Your Telegram bot token")
+	tgOwnerId := flag.Int64("tg_owned_id", 0, "Your Telegram account ID")
+	tgLaunchNotify := flag.Bool("tg_launch_notify", false, "Notify to Telegram after NfCtrl started")
+
+	// Nfq
+	nfqNum := flag.Uint("nf_queue_id", 0, "NfQueue number in iptables")
+	synRepeatsCount := flag.Int("syn_repeats", 0, "SYN repeats count for send alert message")
+
+	// Knocker
+	knockerBindAddr := flag.String("knocker_bind_addr", "", "Addr for bind udp knocker")
+	knockerKey := flag.String("knocker_key", "", "Key for udp knocker")
 
 	flag.Parse()
 
-	tg_owned_id := *tg_owned_id_ptr
-	nf_q_id := *nf_q_id_ptr
-	tg_bot_token := *tg_bot_token_ptr
+	// [MAIN] Make API
+	mainApi := &api.Api{}
 
-	if tg_owned_id == 0 {
-		panic("Default TG owned id is not set.")
-	}
+	// [NFQ] Make nfq module
+	nfqModule := nfqueueModule.New(*synRepeatsCount, api.NewModule("NFQ"), mainApi)
 
-	if tg_bot_token == "" {
-		panic("Default BOT Token is not set.")
-	}
+	// [TG] Make tg module
+	tgModule := telegramModule.New(GetVersion(), *tgBotToken, *tgOwnerId, mainApi, api.NewModule("TG Bot"))
 
-	log.Println("[MAIN-INF] Default TG owned id:", tg_owned_id)
+	// [Knocker] Make knocker module
+	knocker := knockerModule.New(*knockerBindAddr, *knockerKey, api.NewModule("Knocker"), mainApi)
 
-	log.Println("[MAIN-INF] Default NFQUEUE id/number:", nf_q_id)
-	if nf_q_id == 0 {
-		log.Println("[MAIN-WARN] Default NFQUEUE ID set is 0, recommended to change it.")
-	}
-
-	log.Print("[MAIN-INF] Default BOT Token: ", strings.Split(tg_bot_token, ":")[0], ":***\n")
-
-	if *syn_need_repeats_count > 1024 {
-		panic("Maximum syn repeats = 1024!")
-	}
-
-	// Init NFCTRL
-	nfctrl_struct := nfctrl.Make(*syn_need_repeats_count)
-
-	api_bot := bot.Init(tg_bot_token, tg_owned_id, func(cmds []string, api *tgbotapi.BotAPI, update tgbotapi.Update, is_query bool) {
-		if cmds[0] == "/allow" {
-			if len(cmds) < 2 {
-				msg := bot.CreateErrorMessage("Usage: /allow <IP>", tg_owned_id)
-				api.Send(msg)
-				return
-			}
-
-			if err := nfctrl_struct.AllowIP(cmds[1]); err != nil {
-				msg := bot.CreateErrorMessage(err.Error(), tg_owned_id)
-				api.Send(msg)
-				return
-			}
-
-			log.Println("[BOT] Allowed IP:", cmds[1])
-
-			msg := tgbotapi.NewMessage(tg_owned_id, "Allowed")
-			api.Send(msg)
-		} else if cmds[0] == "/drop" {
-			if len(cmds) < 2 {
-				msg := bot.CreateErrorMessage("Usage: /drop <IP>", tg_owned_id)
-				api.Send(msg)
-				return
-			}
-
-			if err := nfctrl_struct.DisallowIP(cmds[1]); err != nil {
-				msg := bot.CreateErrorMessage(err.Error(), tg_owned_id)
-				api.Send(msg)
-				return
-			}
-
-			log.Println("[BOT] Dropped IP:", cmds[1])
-
-			msg := tgbotapi.NewMessage(tg_owned_id, "Dropped")
-			api.Send(msg)
+	// [Knocker] Start mod
+	go func() {
+		if *knockerBindAddr == "" {
+			log.Println("[MAIN] [Knocker] Not listening because bind addr not provided")
+			return
 		}
-	})
 
-	nfctrl_struct.Init(tg_owned_id, api_bot, uint16(nf_q_id), 100, netfilter.NF_DEFAULT_PACKET_SIZE)
+		log.Println("[MAIN] [Knocker] Listening on", *knockerBindAddr)
+		err := knocker.Listen()
+		if err != nil {
+			log.Println("[MAIN] [E] Cant start Knocker Module: ", err)
+		}
+	}()
 
-	select {}
+	// [NFQ] Start mod
+	go func() {
+		log.Println("[MAIN] [NfQueue] Started for queue num:", *nfqNum)
+		err := nfqModule.StartQueue(uint16(*nfqNum), 400, netfilter.NF_DEFAULT_PACKET_SIZE)
+		if err != nil {
+			log.Println("[MAIN] [E] Cant start NFQueue Module: ", err)
+		}
+	}()
+
+	// [TG] Start mod
+	err := tgModule.Start(*tgLaunchNotify)
+	if err != nil {
+		log.Println("[MAIN] [E] Cant start TG Module: ", err)
+	}
 }
