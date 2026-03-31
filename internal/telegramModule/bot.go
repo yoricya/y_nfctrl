@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"y_nfctrl/accessControlModule"
-	"y_nfctrl/api"
+	"y_nfctrl/internal/accessControlModule"
+	api2 "y_nfctrl/internal/api"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -20,13 +20,13 @@ type TelegramModule struct {
 	launchTime   int64
 	token        string
 	ownerId      int64
-	module       *api.Module
-	api          *api.Api
+	module       *api2.Module
+	api          *api2.Api
 	bot          *tgbotapi.BotAPI
 	mu           sync.Mutex
 }
 
-func New(versionOfApp string, token string, ownerId int64, api *api.Api, module *api.Module) *TelegramModule {
+func New(versionOfApp string, token string, ownerId int64, api *api2.Api, module *api2.Module) *TelegramModule {
 	launchTime := time.Now().UnixMilli()
 
 	mod := &TelegramModule{
@@ -44,7 +44,7 @@ func New(versionOfApp string, token string, ownerId int64, api *api.Api, module 
 
 func (this *TelegramModule) Start(launchNotify bool) error {
 	// Set api listeners
-	if err := this.api.SetAllowIPListener(this.module, func(m *api.Module, ip net.IP) error {
+	if err := this.api.SetAllowIPListener(this.module, func(m *api2.Module, ip net.IP) error {
 		// Ignore same module
 		if this.module.Is(m) {
 			return nil
@@ -56,7 +56,7 @@ func (this *TelegramModule) Start(launchNotify bool) error {
 		return err
 	}
 
-	if err := this.api.SetDenyIPListener(this.module, func(m *api.Module, ip net.IP) error {
+	if err := this.api.SetDenyIPListener(this.module, func(m *api2.Module, ip net.IP) error {
 		// Ignore same module
 		if this.module.Is(m) {
 			return nil
@@ -68,7 +68,7 @@ func (this *TelegramModule) Start(launchNotify bool) error {
 		return err
 	}
 
-	if err := this.api.SetNotifyListener(this.module, func(m *api.Module, message string) error {
+	if err := this.api.SetNotifyListener(this.module, func(m *api2.Module, message string) error {
 		// Ignore same module
 		if this.module.Is(m) {
 			return nil
@@ -80,7 +80,7 @@ func (this *TelegramModule) Start(launchNotify bool) error {
 		return err
 	}
 
-	if err := this.api.SetIpRequestListener(this.module, func(m *api.Module, ip net.IP, dstPort uint16, _ bool) error {
+	if err := this.api.SetIpRequestListener(this.module, func(m *api2.Module, ip net.IP, dstPort uint16, _ bool) error {
 		// Ignore same module
 		if this.module.Is(m) {
 			return nil

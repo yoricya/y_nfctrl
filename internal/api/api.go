@@ -5,7 +5,7 @@ import (
 	"log"
 	"net"
 	"sync"
-	"y_nfctrl/accessControlModule"
+	"y_nfctrl/internal/accessControlModule"
 )
 
 type Api struct {

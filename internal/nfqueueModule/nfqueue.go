@@ -5,8 +5,8 @@ import (
 	"log"
 	"net"
 	"sync"
-	"y_nfctrl/accessControlModule"
-	"y_nfctrl/api"
+	accessControlModule2 "y_nfctrl/internal/accessControlModule"
+	api2 "y_nfctrl/internal/api"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 	"github.com/google/gopacket"
@@ -15,34 +15,34 @@ import (
 
 type NfQueueModule struct {
 	needSynRepeats int
-	accessControl  *accessControlModule.AccessControlModule
+	accessControl  *accessControlModule2.AccessControlModule
 	mu             sync.RWMutex
 
 	isInitiated bool
 
-	module *api.Module
-	api    *api.Api
+	module *api2.Module
+	api    *api2.Api
 }
 
-func New(needSynRepeats int, module *api.Module, mapi *api.Api) *NfQueueModule {
+func New(needSynRepeats int, module *api2.Module, mapi *api2.Api) *NfQueueModule {
 	nfq := &NfQueueModule{
 		isInitiated:    false,
 		needSynRepeats: needSynRepeats,
-		accessControl:  accessControlModule.New(),
+		accessControl:  accessControlModule2.New(),
 		mu:             sync.RWMutex{},
 		module:         module,
 		api:            mapi,
 	}
 
-	_ = mapi.SetAllowedIPsCallback(module, func(m *api.Module) ([]*accessControlModule.AcmIP, error) {
+	_ = mapi.SetAllowedIPsCallback(module, func(m *api2.Module) ([]*accessControlModule2.AcmIP, error) {
 		return nfq.accessControl.GetAllowedIPs(), nil
 	})
 
-	_ = mapi.SetDisallowedIPsCallback(module, func(m *api.Module) ([]*accessControlModule.AcmIP, error) {
+	_ = mapi.SetDisallowedIPsCallback(module, func(m *api2.Module) ([]*accessControlModule2.AcmIP, error) {
 		return nfq.accessControl.GetDisallowedIPs(), nil
 	})
 
-	_ = mapi.SetAllowIPListener(module, func(m *api.Module, ip net.IP) error {
+	_ = mapi.SetAllowIPListener(module, func(m *api2.Module, ip net.IP) error {
 		nfq.mu.RLock()
 		if !nfq.isInitiated {
 			return ErrNfqModuleNotInitiated
@@ -52,7 +52,7 @@ func New(needSynRepeats int, module *api.Module, mapi *api.Api) *NfQueueModule {
 		return nfq.accessControl.Get(ip).Allow()
 	})
 
-	_ = mapi.SetDenyIPListener(module, func(m *api.Module, ip net.IP) error {
+	_ = mapi.SetDenyIPListener(module, func(m *api2.Module, ip net.IP) error {
 		nfq.mu.RLock()
 		if !nfq.isInitiated {
 			return ErrNfqModuleNotInitiated
@@ -109,13 +109,13 @@ func (this *NfQueueModule) RecvPacket(packet netfilter.NFPacket) {
 	state := acmIp.ReceivedSYN(this.needSynRepeats)
 
 	// Accept if allow state
-	if state == accessControlModule.StateAllow {
+	if state == accessControlModule2.StateAllow {
 		packet.SetVerdict(netfilter.NF_ACCEPT)
 		return
 	}
 
 	// Notify modules if request state
-	if state == accessControlModule.StateRequest {
+	if state == accessControlModule2.StateRequest {
 		go this.api.IpRequest(this.module, ip, dstPort, true)
 	}
 

@@ -2,14 +2,13 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"log"
 	"runtime/debug"
 	"time"
-	"y_nfctrl/api"
-	"y_nfctrl/knockerModule"
-	"y_nfctrl/nfqueueModule"
-	"y_nfctrl/telegramModule"
+	api2 "y_nfctrl/internal/api"
+	"y_nfctrl/internal/knockerModule"
+	"y_nfctrl/internal/nfqueueModule"
+	"y_nfctrl/internal/telegramModule"
 
 	"github.com/AkihiroSuda/go-netfilter-queue"
 )
@@ -63,7 +62,7 @@ func GetVersion() string {
 }
 
 func main() {
-	fmt.Println("[MAIN] NfCtrl v" + GetVersion() + " starting...")
+	log.Println("[MAIN] NfCtrl v" + GetVersion() + " starting...")
 
 	// Parse args
 
@@ -83,16 +82,16 @@ func main() {
 	flag.Parse()
 
 	// [MAIN] Make API
-	mainApi := &api.Api{}
+	mainApi := &api2.Api{}
 
 	// [NFQ] Make nfq module
-	nfqModule := nfqueueModule.New(*synRepeatsCount, api.NewModule("NFQ"), mainApi)
+	nfqModule := nfqueueModule.New(*synRepeatsCount, api2.NewModule("NFQ"), mainApi)
 
 	// [TG] Make tg module
-	tgModule := telegramModule.New(GetVersion(), *tgBotToken, *tgOwnerId, mainApi, api.NewModule("TG Bot"))
+	tgModule := telegramModule.New(GetVersion(), *tgBotToken, *tgOwnerId, mainApi, api2.NewModule("TG Bot"))
 
 	// [Knocker] Make knocker module
-	knocker := knockerModule.New(*knockerBindAddr, *knockerKey, api.NewModule("Knocker"), mainApi)
+	knocker := knockerModule.New(*knockerBindAddr, *knockerKey, api2.NewModule("Knocker"), mainApi)
 
 	// [Knocker] Start mod
 	go func() {
